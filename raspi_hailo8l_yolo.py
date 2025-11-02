@@ -483,14 +483,15 @@ class DetectionLogger:
 
 def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
     """
-    画像に検出結果を描画
+    画像に検出結果を描画します。
+    バウンディングボックス、クラス名、信頼度スコアを画像上に描画します。
 
     Args:
-        image: 入力画像
-        detections: 検出結果のリスト
+        image (np.ndarray): 入力画像（BGRフォーマット）
+        detections (List[Dict[str, Any]]): 検出結果のリスト（'bbox', 'class_name', 'confidence'を含む）
 
     Returns:
-        描画済み画像
+        np.ndarray: バウンディングボックスとラベル描画済み画像
     """
     result_image = image.copy()
 
@@ -525,16 +526,17 @@ def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.n
 def draw_info(image: np.ndarray, fps: float, resolution: Tuple[int, int],
               inference_time: float) -> np.ndarray:
     """
-    画像に情報表示を描画
+    画像にパフォーマンス情報を描画します。
+    FPS、解像度、推論時間を画面左上に表示します。
 
     Args:
-        image: 入力画像
-        fps: フレームレート
-        resolution: 解像度
-        inference_time: 推論時間(ms)
+        image (np.ndarray): 入力画像（BGRフォーマット）
+        fps (float): 現在のフレームレート（フレーム/秒）
+        resolution (Tuple[int, int]): カメラ解像度 (width, height)
+        inference_time (float): 推論処理時間（ミリ秒）
 
     Returns:
-        情報描画済み画像
+        np.ndarray: パフォーマンス情報描画済み画像
     """
     result_image = image.copy()
 
@@ -561,13 +563,17 @@ def draw_info(image: np.ndarray, fps: float, resolution: Tuple[int, int],
 
 def parse_resolution(resolution_str: str) -> Tuple[int, int]:
     """
-    解像度文字列をパース
+    解像度文字列をパースします。
+    "1280x720" 形式の文字列から (width, height) タプルに変換します。
 
     Args:
-        resolution_str: "1280x720" 形式の文字列
+        resolution_str (str): "1280x720" 形式の文字列
 
     Returns:
-        (width, height) タプル
+        Tuple[int, int]: (width, height) タプル
+
+    Raises:
+        argparse.ArgumentTypeError: フォーマットが無効な場合
     """
     try:
         width, height = map(int, resolution_str.split('x'))

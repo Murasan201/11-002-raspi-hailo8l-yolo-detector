@@ -322,7 +322,11 @@ class HailoYOLODetector:
 
 
 class GStreamerWebcamPipeline:
-    """GStreamer USBウェブカメラパイプライン"""
+    """
+    GStreamer USBウェブカメラパイプライン
+    GStreamerを使用してUSB Webカメラからビデオストリームを効率的に処理します。
+    非ブロッキングキュー方式でフレームを取得し、物体検出処理との並列化を実現します。
+    """
 
     def __init__(self, device_path: str = "/dev/video0", width: int = 1280, height: int = 720, framerate: int = 30):
         """
@@ -344,7 +348,13 @@ class GStreamerWebcamPipeline:
         self.running = False
 
     def create_pipeline(self) -> bool:
-        """GStreamerパイプラインの作成"""
+        """
+        GStreamerパイプラインの作成と初期化
+        USB WebカメラからYUV2フォーマットで取得し、BGRフォーマットに変換します。
+
+        Returns:
+            bool: パイプライン作成成功時はTrue、失敗時はFalse
+        """
         try:
             # USB Webカメラ用パイプライン（ロジクール等に最適化）
             pipeline_str = (
@@ -376,7 +386,16 @@ class GStreamerWebcamPipeline:
             return False
 
     def _on_new_sample(self, appsink):
-        """新しいフレームのコールバック"""
+        """
+        GStreamerからの新しいフレーム受信時のコールバック
+        フレームデータをNumPy配列に変換して、キューに追加します。
+
+        Args:
+            appsink: GStreamer AppSinkオブジェクト
+
+        Returns:
+            Gst.FlowReturn: 処理結果（OK: 正常終了、ERROR: エラー）
+        """
         try:
             sample = appsink.emit("pull-sample")
             if sample:
@@ -408,7 +427,13 @@ class GStreamerWebcamPipeline:
         return Gst.FlowReturn.OK
 
     def start(self) -> bool:
-        """パイプラインの開始"""
+        """
+        GStreamerパイプラインの開始
+        パイプラインを PLAYING 状態に遷移させてビデオストリーム処理を開始します。
+
+        Returns:
+            bool: 開始成功時はTrue、失敗時はFalse
+        """
         if not self.pipeline:
             return False
 
@@ -427,7 +452,13 @@ class GStreamerWebcamPipeline:
             return False
 
     def get_frame(self) -> Optional[np.ndarray]:
-        """フレームの取得"""
+        """
+        パイプラインからフレームを取得
+        キューに存在するフレームを非ブロッキング方式で取得します。
+
+        Returns:
+            Optional[np.ndarray]: フレーム画像（BGRフォーマット）、フレームがない場合はNone
+        """
         try:
             if not self.frame_queue.empty():
                 return self.frame_queue.get_nowait()
@@ -436,7 +467,10 @@ class GStreamerWebcamPipeline:
             return None
 
     def stop(self):
-        """パイプラインの停止"""
+        """
+        GStreamerパイプラインの停止
+        パイプラインを NULL 状態に遷移させてリソースを解放します。
+        """
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
             self.running = False
@@ -444,7 +478,11 @@ class GStreamerWebcamPipeline:
 
 
 class PerformanceMonitor:
-    """パフォーマンス監視クラス"""
+    """
+    パフォーマンス監視クラス
+    フレームレート、推論時間などのパフォーマンス指標を収集・計算します。
+    移動平均を使用して瞬間的な変動を平滑化し、安定したメトリクスを提供します。
+    """
 
     def __init__(self, window_size: int = 30):
         """
@@ -460,32 +498,62 @@ class PerformanceMonitor:
         self.start_time = time.time()
 
     def update_frame_time(self, frame_time: float):
-        """フレーム時間の更新"""
+        """
+        フレーム処理時間を更新
+        窓サイズを超える場合は古いデータを削除して移動平均を計算します。
+
+        Args:
+            frame_time (float): フレーム処理時間（秒）
+        """
         self.frame_times.append(frame_time)
         if len(self.frame_times) > self.window_size:
             self.frame_times.pop(0)
         self.frame_count += 1
 
     def update_inference_time(self, inference_time: float):
-        """推論時間の更新"""
+        """
+        推論処理時間を更新
+        窓サイズを超える場合は古いデータを削除します。
+
+        Args:
+            inference_time (float): 推論処理時間（秒）
+        """
         self.inference_times.append(inference_time)
         if len(self.inference_times) > self.window_size:
             self.inference_times.pop(0)
 
     def get_fps(self) -> float:
-        """現在のFPSを取得"""
+        """
+        現在のフレームレートを計算
+        移動平均ウィンドウ内のフレーム処理時間から計算します。
+
+        Returns:
+            float: フレームレート（フレーム/秒）
+        """
         if len(self.frame_times) < 2:
             return 0.0
         return len(self.frame_times) / sum(self.frame_times)
 
     def get_avg_inference_time(self) -> float:
-        """平均推論時間を取得（ms）"""
+        """
+        平均推論時間を計算
+        移動平均ウィンドウ内の推論時間の平均をミリ秒単位で返します。
+
+        Returns:
+            float: 平均推論時間（ミリ秒）
+        """
         if not self.inference_times:
             return 0.0
         return sum(self.inference_times) / len(self.inference_times) * 1000
 
     def get_total_fps(self) -> float:
-        """総合FPSを取得"""
+        """
+        総合フレームレートを計算
+        起動からの経過時間に対する平均フレームレートを返します。
+
+        Returns:
+            float: 総合フレームレート（フレーム/秒）
+        """
         elapsed = time.time() - self.start_time
         if elapsed > 0:
             return self.frame_count / elapsed
@@ -493,7 +561,17 @@ class PerformanceMonitor:
 
 
 def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
-    """検出結果の描画（USB Webcam最適化版）"""
+    """
+    画像に検出結果を描画します（USB Webcam最適化版）。
+    バウンディングボックスのサイズに応じて線の太さとフォントサイズを動的に調整します。
+
+    Args:
+        image (np.ndarray): 入力画像（BGRフォーマット）
+        detections (List[Dict[str, Any]]): 検出結果のリスト
+
+    Returns:
+        np.ndarray: バウンディングボックスとラベル描画済み画像
+    """
     result_image = image.copy()
 
     for det in detections:
@@ -530,7 +608,19 @@ def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.n
 
 def draw_performance_info(image: np.ndarray, monitor: PerformanceMonitor,
                          resolution: Tuple[int, int], detection_count: int) -> np.ndarray:
-    """パフォーマンス情報の描画"""
+    """
+    画像にパフォーマンス情報を描画します。
+    FPS、解像度、推論時間、検出数、フレーム数を画面左上に表示します。
+
+    Args:
+        image (np.ndarray): 入力画像（BGRフォーマット）
+        monitor (PerformanceMonitor): パフォーマンスモニタオブジェクト
+        resolution (Tuple[int, int]): カメラ解像度 (width, height)
+        detection_count (int): 現在のフレームでの検出物体数
+
+    Returns:
+        np.ndarray: パフォーマンス情報描画済み画像
+    """
     result_image = image.copy()
 
     # パフォーマンス情報

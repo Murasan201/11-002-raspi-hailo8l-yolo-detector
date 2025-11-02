@@ -97,6 +97,19 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25
 
 ## Code Quality Standards
 
+### Coding Standards and Guidelines
+このプロジェクトのすべてのコード開発は以下のドキュメントに従うこと：
+- **COMMENT_STYLE_GUIDE.md**: コメント記載とdocstring形式の標準
+- **python_coding_guidelines.md**: Python コーディング規約と命名規則
+
+#### 遵守すべき主要ルール
+- **PEP 8準拠**: 4スペースインデント、snake_case（変数・関数）、PascalCase（クラス）
+- **型注釈**: すべての関数署名に type hints を記載（Args、Returns に対応）
+- **Docstring形式**: Google style フォーマット（説明 + Args + Returns）
+- **エラーハンドリング**: 特定の例外をキャッチ、ユーザー向けのヒント付きメッセージ
+- **if __name__ == "__main__"**: 実行可能なスクリプトに必須
+- **インラインコメント**: *何*ではなく*なぜ*を説明、初心者向けの補足情報を含む
+
 ### Documentation Requirements
 1. **Every function/method** must have a docstring following COMMENT_STYLE_GUIDE.md
 2. **Every class** must have a multi-line docstring explaining its purpose and design intent
