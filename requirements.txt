@@ -1,0 +1,20 @@
+# Raspberry Pi Hailo-8L YOLO Detector Dependencies
+# Python 3.11+ required
+
+# Computer Vision and Image Processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=9.5.0
+
+# Hailo AI Framework
+# Note: HailoRT SDK must be installed separately following official instructions
+# hailort>=4.15.0  # Install via official Hailo SDK
+
+# Camera and Media Handling
+picamera2>=0.3.17
+
+# Command Line Interface
+argparse  # Built-in module
+
+# Logging and Data Handling
+pandas>=2.0.0  # For CSV logging
