@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """
-Raspberry Pi 5 + Hailo-8L YOLO物体検出アプリケーション
+Raspberry Pi 5 + Hailo-8L YOLO物体検出アプリケーション/ライブラリ
 Hailo-8L AIアクセラレータを使用したリアルタイムYOLO物体検出システム
-要件定義書: 11_002_raspi_hailo_8_l_yolo_detector.md
+要件定義書: docs/11_002_raspi_hailo_8_l_yolo_detector.md
 
-このスクリプトは以下の機能を提供します：
+このモジュールは以下の2つの使用方法をサポートします：
+
+1. ライブラリとして使用（別プロジェクトからインポート）:
+    from raspi_hailo8l_yolo import YOLODetector, CameraManager, draw_detections
+
+    detector = YOLODetector("models/yolov8s_h8l.hef")
+    detections = detector.detect(image)
+    result = draw_detections(image, detections)
+
+2. CLIアプリケーションとして実行:
+    python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
+    python raspi_hailo8l_yolo.py --res 1280x720 --save
+
+機能:
 - リアルタイムカメラ映像からのYOLO物体検出
 - Hailo-8L AIアクセラレータを使用した高速推論
 - バウンディングボックス、クラス名、信頼度の表示
 - 動画保存、ログ出力機能
-
-使用方法：
-    python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
-    python raspi_hailo8l_yolo.py --res 1280x720 --save
 """
 
 import cv2
@@ -21,34 +30,215 @@ import argparse
 import time
 import os
 import csv
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-try:
-    from picamera2 import Picamera2
-    PICAMERA2_AVAILABLE = True
-except ImportError:
-    PICAMERA2_AVAILABLE = False
-    print("警告: picamera2がインストールされていません。USB Webカメラモードで動作します。")
+# ============================================================================
+# ライブラリ公開API定義
+# ============================================================================
+__all__ = [
+    # クラス
+    'YOLODetector',
+    'CameraManager',
+    'DetectionLogger',
+    # ユーティリティ関数
+    'draw_detections',
+    'draw_info',
+    'parse_resolution',
+    # 可用性チェック関数
+    'is_hailo_available',
+    'is_picamera_available',
+    # ロガー設定
+    'setup_logging',
+    'get_logger',
+]
 
-try:
-    import hailo_platform
-    from hailo_platform import (HEF, VDevice, HailoStreamInterface,
-                               InferVStreams, ConfigureParams,
-                               InputVStreamParams, OutputVStreamParams,
-                               FormatType)
-    HAILO_AVAILABLE = True
-except ImportError:
-    HAILO_AVAILABLE = False
-    print("警告: HailoRT SDKがインストールされていません。CPUモードで動作します。")
+# ============================================================================
+# ロギング設定
+# ============================================================================
+# モジュール専用ロガー（ライブラリ使用時は呼び出し側でハンドラを設定可能）
+_logger = logging.getLogger(__name__)
 
 
+def setup_logging(level: int = logging.INFO,
+                  format_string: str = None) -> logging.Logger:
+    """
+    ロギングの設定を行います。
+    CLIアプリケーションとして使用する場合や、ライブラリ使用時に
+    ログ出力を有効化したい場合に呼び出します。
+
+    Args:
+        level (int): ログレベル（logging.DEBUG, logging.INFO等）
+        format_string (str): ログフォーマット文字列（Noneの場合はデフォルト使用）
+
+    Returns:
+        logging.Logger: 設定済みのロガーインスタンス
+
+    使用例:
+        # 基本的な使用
+        setup_logging()
+
+        # デバッグレベルで詳細出力
+        setup_logging(level=logging.DEBUG)
+    """
+    if format_string is None:
+        format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(format_string))
+
+    _logger.addHandler(handler)
+    _logger.setLevel(level)
+
+    return _logger
+
+
+def get_logger() -> logging.Logger:
+    """
+    モジュールのロガーインスタンスを取得します。
+    ライブラリ使用時にログハンドラをカスタマイズする場合に使用します。
+
+    Returns:
+        logging.Logger: モジュールのロガーインスタンス
+
+    使用例:
+        logger = get_logger()
+        logger.addHandler(my_custom_handler)
+    """
+    return _logger
+
+
+# ============================================================================
+# 依存ライブラリの遅延インポートと可用性チェック
+# ============================================================================
+# グローバルフラグ（インポート時に警告を出さない）
+_PICAMERA2_AVAILABLE: Optional[bool] = None
+_HAILO_AVAILABLE: Optional[bool] = None
+
+# 遅延インポート用のモジュール参照
+_Picamera2 = None
+_hailo_platform = None
+_HEF = None
+_VDevice = None
+_HailoStreamInterface = None
+_InferVStreams = None
+_ConfigureParams = None
+_InputVStreamParams = None
+_OutputVStreamParams = None
+_FormatType = None
+
+
+def _check_picamera2() -> bool:
+    """Picamera2の可用性をチェックし、利用可能ならインポートする"""
+    global _PICAMERA2_AVAILABLE, _Picamera2
+
+    if _PICAMERA2_AVAILABLE is not None:
+        return _PICAMERA2_AVAILABLE
+
+    try:
+        from picamera2 import Picamera2
+        _Picamera2 = Picamera2
+        _PICAMERA2_AVAILABLE = True
+        _logger.debug("Picamera2 が利用可能です")
+    except ImportError:
+        _PICAMERA2_AVAILABLE = False
+        _logger.debug("Picamera2 が利用できません。USB Webカメラモードで動作します。")
+
+    return _PICAMERA2_AVAILABLE
+
+
+def _check_hailo() -> bool:
+    """HailoRT SDKの可用性をチェックし、利用可能ならインポートする"""
+    global _HAILO_AVAILABLE
+    global _hailo_platform, _HEF, _VDevice, _HailoStreamInterface
+    global _InferVStreams, _ConfigureParams
+    global _InputVStreamParams, _OutputVStreamParams, _FormatType
+
+    if _HAILO_AVAILABLE is not None:
+        return _HAILO_AVAILABLE
+
+    try:
+        import hailo_platform
+        from hailo_platform import (HEF, VDevice, HailoStreamInterface,
+                                   InferVStreams, ConfigureParams,
+                                   InputVStreamParams, OutputVStreamParams,
+                                   FormatType)
+        _hailo_platform = hailo_platform
+        _HEF = HEF
+        _VDevice = VDevice
+        _HailoStreamInterface = HailoStreamInterface
+        _InferVStreams = InferVStreams
+        _ConfigureParams = ConfigureParams
+        _InputVStreamParams = InputVStreamParams
+        _OutputVStreamParams = OutputVStreamParams
+        _FormatType = FormatType
+        _HAILO_AVAILABLE = True
+        _logger.debug("HailoRT SDK が利用可能です")
+    except ImportError:
+        _HAILO_AVAILABLE = False
+        _logger.debug("HailoRT SDK が利用できません。CPUモードで動作します。")
+
+    return _HAILO_AVAILABLE
+
+
+def is_hailo_available() -> bool:
+    """
+    HailoRT SDKが利用可能かどうかを確認します。
+
+    Returns:
+        bool: HailoRT SDKが利用可能な場合はTrue
+
+    使用例:
+        if is_hailo_available():
+            detector = YOLODetector("model.hef")
+        else:
+            print("Hailoが利用できません")
+    """
+    return _check_hailo()
+
+
+def is_picamera_available() -> bool:
+    """
+    Picamera2（Camera Module V3用）が利用可能かどうかを確認します。
+
+    Returns:
+        bool: Picamera2が利用可能な場合はTrue
+
+    使用例:
+        if is_picamera_available():
+            camera = CameraManager(use_picamera=True)
+        else:
+            camera = CameraManager(use_picamera=False)
+    """
+    return _check_picamera2()
+
+
+# ============================================================================
+# メインクラス定義
+# ============================================================================
 class YOLODetector:
     """
     YOLO物体検出器クラス（Hailo-8L対応）
+
     Hailo-8L AIアクセラレータを使用したリアルタイム物体検出を実行します。
     初心者向けに設計され、前処理・推論・後処理が明確に分離されています。
+
+    ライブラリとして使用する場合の例:
+        from raspi_hailo8l_yolo import YOLODetector
+
+        # 検出器の初期化
+        detector = YOLODetector("models/yolov8s_h8l.hef", conf_threshold=0.3)
+
+        # 画像から物体検出
+        import cv2
+        image = cv2.imread("test.jpg")
+        detections = detector.detect(image)
+
+        # 結果の処理
+        for det in detections:
+            print(f"{det['class_name']}: {det['confidence']:.2f}")
     """
 
     def __init__(self, model_path: str, conf_threshold: float = 0.25,
@@ -60,6 +250,10 @@ class YOLODetector:
             model_path (str): HEFモデルファイルのパス（例: 'models/yolov8s_h8l.hef'）
             conf_threshold (float): 信頼度閾値（0.0-1.0、デフォルト: 0.25）
             iou_threshold (float): IoU閾値（NMS用、デフォルト: 0.45）
+
+        Raises:
+            FileNotFoundError: モデルファイルが見つからない場合
+            RuntimeError: Hailoデバイスの初期化に失敗した場合
         """
         self.model_path = model_path
         self.conf_threshold = conf_threshold
@@ -71,8 +265,9 @@ class YOLODetector:
         self.output_vstreams_params = None
         self.input_name = None
         self.output_name = None
+        self._initialized = False
 
-        # COCO データセットのクラス名
+        # COCO データセットのクラス名（80クラス）
         self.class_names = [
             'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
             'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
@@ -90,30 +285,37 @@ class YOLODetector:
 
         self._initialize_hailo()
 
+    @property
+    def is_initialized(self) -> bool:
+        """
+        Hailoデバイスが正常に初期化されているかを確認します。
+
+        Returns:
+            bool: 初期化済みの場合はTrue
+        """
+        return self._initialized
+
     def _initialize_hailo(self) -> None:
         """
         Hailoデバイスとモデルの初期化
         HEFファイルを読み込んでHailo-8Lデバイスを設定します。
         新しいHailoRT API（v4.x）に対応しています。
         """
-        if not HAILO_AVAILABLE:
-            print("警告: HailoRT SDK が利用できません。CPUモードで動作します。")
-            print("対処方法: Hailo SDK をインストールしてください")
+        if not _check_hailo():
+            _logger.warning("HailoRT SDK が利用できません。CPUモードで動作します。")
             return
 
         if not os.path.exists(self.model_path):
-            print(f"エラー: モデルファイルが見つかりません: {self.model_path}")
-            print(f"対処方法: 以下のパスにHEFモデルを配置してください:")
-            print(f"  {os.path.abspath('models/')}")
-            print(f"例: python raspi_hailo8l_yolo.py --model models/yolov8n_hailo.hef")
-            return
+            error_msg = f"モデルファイルが見つかりません: {self.model_path}"
+            _logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
 
         try:
             # Hailo デバイスの初期化
-            self.device = VDevice()
+            self.device = _VDevice()
 
             # HEF（Hailo Execution Format）ファイルの読み込み
-            self.hef = HEF(self.model_path)
+            self.hef = _HEF(self.model_path)
 
             # 入出力ストリーム情報の取得
             input_vstream_infos = self.hef.get_input_vstream_infos()
@@ -123,30 +325,32 @@ class YOLODetector:
             self.input_name = input_vstream_infos[0].name
             self.output_name = output_vstream_infos[0].name
 
-            print(f"入力レイヤー: {self.input_name}")
-            print(f"出力レイヤー: {self.output_name}")
+            _logger.info(f"入力レイヤー: {self.input_name}")
+            _logger.info(f"出力レイヤー: {self.output_name}")
 
             # ネットワークグループの設定（モデルをHailoデバイスにロード）
-            configure_params = ConfigureParams.create_from_hef(
-                hef=self.hef, interface=HailoStreamInterface.PCIe)
+            configure_params = _ConfigureParams.create_from_hef(
+                hef=self.hef, interface=_HailoStreamInterface.PCIe)
             network_groups = self.device.configure(self.hef, configure_params)
             self.network_group = network_groups[0]
 
             # 入出力VStreamsパラメータの作成
             # 入力: UINT8形式（0-255の画像データ）
             # 出力: FLOAT32形式（NMS後処理済みの検出結果）
-            self.input_vstreams_params = InputVStreamParams.make(
-                self.network_group, format_type=FormatType.UINT8)
-            self.output_vstreams_params = OutputVStreamParams.make(
-                self.network_group, format_type=FormatType.FLOAT32)
+            self.input_vstreams_params = _InputVStreamParams.make(
+                self.network_group, format_type=_FormatType.UINT8)
+            self.output_vstreams_params = _OutputVStreamParams.make(
+                self.network_group, format_type=_FormatType.FLOAT32)
 
-            print("Hailo-8L デバイスが正常に初期化されました。")
+            self._initialized = True
+            _logger.info("Hailo-8L デバイスが正常に初期化されました。")
 
         except Exception as e:
-            print(f"エラー: Hailo デバイスの初期化に失敗しました: {e}")
-            print("対処方法: Hailo デバイスの接続と電源を確認してください")
-            print("ヒント: hailortcli fw-control identify でデバイスを確認")
+            error_msg = f"Hailo デバイスの初期化に失敗しました: {e}"
+            _logger.error(error_msg)
+            _logger.error("対処方法: hailortcli fw-control identify でデバイスを確認")
             self.device = None
+            raise RuntimeError(error_msg) from e
 
     def preprocess_image(self, image: np.ndarray,
                         target_size: Tuple[int, int] = (640, 640)
@@ -300,8 +504,15 @@ class YOLODetector:
                 - 'confidence' (float): 信頼度スコア（0.0-1.0）
                 - 'class_id' (int): クラスID（0-79、COCOデータセット）
                 - 'class_name' (str): クラス名（例: 'person', 'car'）
+
+        使用例:
+            detector = YOLODetector("models/yolov8s_h8l.hef")
+            image = cv2.imread("test.jpg")
+            detections = detector.detect(image)
+            for det in detections:
+                print(f"{det['class_name']}: {det['confidence']:.2f}")
         """
-        if self.device is None or not HAILO_AVAILABLE:
+        if self.device is None or not _check_hailo():
             # Hailoが利用できない場合、CPUモードでのダミー検出（テスト用）
             return self._dummy_detect(image)
 
@@ -312,9 +523,9 @@ class YOLODetector:
             # 推論実行：Hailo-8Lで高速推論を実行
             # HailoRT v4.x API を使用
             with self.network_group.activate():
-                with InferVStreams(self.network_group,
-                                  self.input_vstreams_params,
-                                  self.output_vstreams_params) as infer_pipeline:
+                with _InferVStreams(self.network_group,
+                                   self.input_vstreams_params,
+                                   self.output_vstreams_params) as infer_pipeline:
                     # 入力データの設定
                     input_dict = {self.input_name: preprocessed}
 
@@ -330,10 +541,8 @@ class YOLODetector:
             return detections
 
         except Exception as e:
-            print(f"エラー: 推論に失敗しました: {e}")
-            print("対処方法: モデルファイルとHailoデバイスの接続を確認してください")
-            import traceback
-            traceback.print_exc()
+            _logger.error(f"推論に失敗しました: {e}")
+            _logger.debug("詳細:", exc_info=True)
             return []
 
     def _dummy_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -348,10 +557,11 @@ class YOLODetector:
         """
         # Hailo非利用時のテスト用仮想検出結果
         # 実運用ではCPUベースのYOLO推論を実装することを推奨
+        _logger.warning("Hailoが利用できないため、ダミー検出を返します")
         height, width = image.shape[:2]
         return [
             {
-                'bbox': [width//4, height//4, width*3//4, height*3//4],
+                'bbox': [width // 4, height // 4, width * 3 // 4, height * 3 // 4],
                 'confidence': 0.85,
                 'class_id': 0,
                 'class_name': 'person'
@@ -362,26 +572,56 @@ class YOLODetector:
 class CameraManager:
     """
     カメラ管理クラス
+
     Camera Module V3またはUSB Webカメラの初期化と制御を行います。
     自動フォールバック機能により、Picamera2が利用できない場合はUSBカメラに切り替わります。
+
+    ライブラリとして使用する場合の例:
+        from raspi_hailo8l_yolo import CameraManager
+
+        # Camera Module V3を使用
+        camera = CameraManager(resolution=(1280, 720))
+
+        # フレームを取得
+        frame = camera.read_frame()
+
+        # 使用後は必ず解放
+        camera.release()
     """
 
     def __init__(self, resolution: Tuple[int, int] = (1280, 720),
-                 device_id: int = 0, flip_vertical: bool = False):
+                 device_id: int = 0, flip_vertical: bool = False,
+                 use_picamera: Optional[bool] = None):
         """
         カメラマネージャーの初期化
 
         Args:
             resolution (Tuple[int, int]): カメラ解像度 (width, height)、デフォルト: (1280, 720)
             device_id (int): カメラデバイスID（USB Webカメラ用、デフォルト: 0）
-            flip_vertical (bool): 画像を上下反転するかどうか（カメラを逆さまに設置した場合に使用）
+            flip_vertical (bool): 画像を上下反転するかどうか（カメラを逆さまに設置した場合）
+            use_picamera (Optional[bool]): Picamera2を強制使用するかどうか
+                - None: 自動判定（Picamera2が利用可能なら使用）
+                - True: Picamera2を強制使用（利用不可なら例外）
+                - False: USB Webカメラを強制使用
+
+        Raises:
+            RuntimeError: カメラの初期化に失敗した場合
         """
         self.resolution = resolution
         self.device_id = device_id
         self.flip_vertical = flip_vertical
         self.camera = None
         self.cap = None
-        self.use_picamera = PICAMERA2_AVAILABLE
+
+        # Picamera2の使用判定
+        if use_picamera is None:
+            self.use_picamera = _check_picamera2()
+        elif use_picamera:
+            if not _check_picamera2():
+                raise RuntimeError("Picamera2が利用できません")
+            self.use_picamera = True
+        else:
+            self.use_picamera = False
 
         self._initialize_camera()
 
@@ -392,7 +632,7 @@ class CameraManager:
         """
         if self.use_picamera:
             try:
-                self.camera = Picamera2()
+                self.camera = _Picamera2()
 
                 # Picamera2の設定（RGB888フォーマット）
                 camera_config = self.camera.create_still_configuration(
@@ -401,12 +641,10 @@ class CameraManager:
                 self.camera.configure(camera_config)
                 self.camera.start()
 
-                print(f"Camera Module V3 を使用します。解像度: {self.resolution}")
+                _logger.info(f"Camera Module V3 を使用します。解像度: {self.resolution}")
 
             except Exception as e:
-                print(f"警告: Camera Module V3 の初期化に失敗しました: {e}")
-                print("対処方法: libcamera-hello でカメラ接続を確認してください")
-                print("ヒント: raspi-config で camera インターフェースを有効化")
+                _logger.warning(f"Camera Module V3 の初期化に失敗しました: {e}")
                 self.use_picamera = False
                 self._initialize_webcam()
         else:
@@ -421,19 +659,18 @@ class CameraManager:
             self.cap = cv2.VideoCapture(self.device_id)
 
             if not self.cap.isOpened():
-                raise Exception(f"カメラデバイス {self.device_id} を開けません")
+                raise RuntimeError(f"カメラデバイス {self.device_id} を開けません")
 
             # 解像度設定（リクエストベース。実際の解像度はカメラの対応状況に依存）
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
 
-            print(f"USB Webカメラを使用します。解像度: {self.resolution}")
+            _logger.info(f"USB Webカメラを使用します。解像度: {self.resolution}")
 
         except Exception as e:
-            print(f"エラー: USB Webカメラの初期化に失敗しました: {e}")
-            print("対処方法: カメラの接続を確認してください")
-            print("ヒント: ls /dev/video* でカメラデバイスを確認")
-            raise
+            error_msg = f"USB Webカメラの初期化に失敗しました: {e}"
+            _logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
 
     def read_frame(self) -> Optional[np.ndarray]:
         """
@@ -465,7 +702,7 @@ class CameraManager:
             return frame
 
         except Exception as e:
-            print(f"エラー: フレーム読み取りに失敗しました: {e}")
+            _logger.error(f"フレーム読み取りに失敗しました: {e}")
             return None
 
     def release(self) -> None:
@@ -476,16 +713,32 @@ class CameraManager:
         if self.camera:
             self.camera.stop()
             self.camera.close()
+            self.camera = None
 
         if self.cap:
             self.cap.release()
+            self.cap = None
+
+    def __enter__(self):
+        """コンテキストマネージャーのエントリーポイント"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """コンテキストマネージャーの終了処理"""
+        self.release()
+        return False
 
 
 class DetectionLogger:
     """
     検出結果ログ管理クラス
+
     YOLOの検出結果をCSVフォーマットで記録します。
     タイムスタンプ、フレームID、クラス名、信頼度、バウンディングボックス座標を保存します。
+
+    使用例:
+        logger = DetectionLogger("logs")
+        logger.log_detections(frame_id=0, detections=detections)
     """
 
     def __init__(self, log_dir: str = "logs"):
@@ -506,6 +759,8 @@ class DetectionLogger:
         with open(self.log_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['timestamp', 'frame_id', 'class_name', 'confidence', 'x1', 'y1', 'x2', 'y2'])
+
+        _logger.info(f"ログファイルを作成しました: {self.log_file}")
 
     def log_detections(self, frame_id: int,
                       detections: List[Dict[str, Any]]) -> None:
@@ -529,7 +784,12 @@ class DetectionLogger:
                 ])
 
 
-def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
+# ============================================================================
+# ユーティリティ関数
+# ============================================================================
+def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]],
+                   color: Tuple[int, int, int] = (0, 255, 0),
+                   thickness: int = 2) -> np.ndarray:
     """
     画像に検出結果を描画します。
     バウンディングボックス、クラス名、信頼度スコアを画像上に描画します。
@@ -537,9 +797,15 @@ def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.n
     Args:
         image (np.ndarray): 入力画像（BGRフォーマット）
         detections (List[Dict[str, Any]]): 検出結果のリスト（'bbox', 'class_name', 'confidence'を含む）
+        color (Tuple[int, int, int]): バウンディングボックスの色（BGR、デフォルト: 緑）
+        thickness (int): 線の太さ（デフォルト: 2）
 
     Returns:
         np.ndarray: バウンディングボックスとラベル描画済み画像
+
+    使用例:
+        result = draw_detections(image, detections)
+        cv2.imshow("Result", result)
     """
     result_image = image.copy()
 
@@ -550,8 +816,7 @@ def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]]) -> np.n
         class_name = det['class_name']
 
         # バウンディングボックスの描画
-        color = (0, 255, 0)  # 緑色
-        cv2.rectangle(result_image, (x1, y1), (x2, y2), color, 2)
+        cv2.rectangle(result_image, (x1, y1), (x2, y2), color, thickness)
 
         # ラベルの描画
         label = f"{class_name}: {confidence:.2f}"
@@ -630,18 +895,25 @@ def parse_resolution(resolution_str: str) -> Tuple[int, int]:
         raise argparse.ArgumentTypeError(f"Invalid resolution format: {resolution_str}")
 
 
+# ============================================================================
+# CLIアプリケーション
+# ============================================================================
 def main():
     """
     メイン関数：コマンドライン引数を処理してYOLO物体検出を実行
     Hailo-8Lを使用したリアルタイム推論とビデオ出力を管理します。
     """
+    # CLIモードではログ出力を有効化
+    setup_logging(level=logging.INFO,
+                  format_string='%(levelname)s: %(message)s')
+
     parser = argparse.ArgumentParser(
         description="Raspberry Pi 5 + Hailo-8L AI Kit YOLO物体検出",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
     parser.add_argument('--model', type=str,
-                       default='models/yolov8n_hailo.hef',
+                       default='models/yolov8s_h8l.hef',
                        help='HEFモデルファイルのパス')
 
     parser.add_argument('--res', type=parse_resolution,
@@ -676,6 +948,9 @@ def main():
     if args.flip:
         print("カメラ映像: 上下反転")
 
+    camera = None
+    video_writer = None
+
     try:
         # YOLODetectorの初期化
         detector = YOLODetector(args.model, args.conf, args.iou)
@@ -690,7 +965,6 @@ def main():
             print(f"ログファイル: {logger.log_file}")
 
         # 動画保存の準備
-        video_writer = None
         if args.save:
             output_dir = Path("output")
             output_dir.mkdir(exist_ok=True)
@@ -760,6 +1034,9 @@ def main():
     except FileNotFoundError as e:
         print(f"エラー: ファイルが見つかりません: {e}")
 
+    except RuntimeError as e:
+        print(f"エラー: {e}")
+
     except Exception as e:
         print(f"エラー: 予期しないエラーが発生しました: {e}")
         import traceback
@@ -767,7 +1044,7 @@ def main():
 
     finally:
         # リソースの解放
-        if 'camera' in locals():
+        if camera:
             camera.release()
 
         if video_writer:
