@@ -8,6 +8,75 @@
 ## Development Workflow
 **IMPORTANT**: Always start by reading the requirements document `11_002_raspi_hailo_8_l_yolo_detector.md` before beginning any development work. This document contains the complete project specifications, functional requirements, and implementation guidelines.
 
+## Project Management & Development Delegation
+
+### PM（プロジェクトマネージャー）の役割
+PMは以下の役割を担い、**直接コーディング作業を行わない**：
+- プロジェクト全体の進捗管理
+- 要件の明確化と優先順位付け
+- タスクの分割と割り当て
+- 成果物のレビューと品質管理
+
+### サブエージェントへの作業依頼ルール
+**CRITICAL**: PMがコーディング作業を行う際は、必ずサブエージェント（Task tool）を起動して作業を委譲すること。
+
+#### 依頼時の必須事項
+1. **参照仕様書の明示的な指定**
+   - 必ず参照すべきドキュメントのパスを指定する
+   - サブエージェントは指定された仕様書を読み込んでから作業を開始する
+
+2. **指定すべき仕様書の種類**
+   | 作業内容 | 必須参照ドキュメント |
+   |---------|-------------------|
+   | 新機能実装 | `docs/11_002_raspi_hailo_8_l_yolo_detector.md`（要件定義書） |
+   | コード修正/リファクタリング | `docs/python_coding_guidelines.md`（コーディング規約） |
+   | ドキュメント/コメント追加 | `docs/COMMENT_STYLE_GUIDE.md`（コメント標準） |
+   | 全般的な開発作業 | `docs/CLAUDE.md`（本ドキュメント） |
+
+3. **依頼プロンプトのテンプレート**
+   ```
+   以下のタスクを実行してください。
+
+   【タスク】
+   <具体的な作業内容>
+
+   【参照仕様書】
+   - docs/<仕様書名>.md
+
+   【制約事項】
+   - 仕様書のルールに従うこと
+   - 日本語でコメントを記載すること
+   ```
+
+#### サブエージェント起動例
+```
+Task tool を使用:
+- subagent_type: "general-purpose" または "Plan"
+- model: "sonnet"  ← コーディング作業では必ず sonnet を指定
+- prompt: 上記テンプレートに従った依頼内容
+```
+
+#### モデル指定ルール
+**IMPORTANT**: コーディング作業のためにサブエージェントを起動する際は、必ず `model: "sonnet"` を指定すること。
+- **sonnet**: コーディング作業（実装、修正、リファクタリング）
+- **haiku**: 軽微な調査、簡単な質問応答（コーディング以外）
+- **opus**: 複雑な設計判断、アーキテクチャ検討（PMが直接使用）
+
+### 作業フロー
+```
+1. PM: 要件を分析しタスクを定義
+      ↓
+2. PM: 参照仕様書を特定
+      ↓
+3. PM: Task tool でサブエージェントを起動
+      ↓
+4. サブエージェント: 仕様書を読み込み
+      ↓
+5. サブエージェント: コーディング作業を実施
+      ↓
+6. PM: 成果物をレビュー
+```
+
 ## Communication Rules
 - **Language**: Always respond in Japanese (日本語で返答する)
 - **Documentation**: Code comments and documentation should be in Japanese when appropriate
@@ -94,6 +163,59 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25
 - No sensitive data or API keys in code
 - Models may have licensing restrictions (don't redistribute)
 - Follow defensive security practices for embedded systems
+
+## Troubleshooting Documentation Rules
+
+### エラー記録の義務
+**CRITICAL**: 環境構築や開発作業中に発生したすべてのエラーとその解決策は、必ず `docs/TROUBLESHOOTING.md` に記録すること。
+
+### 記録すべき情報
+1. **発生日**: エラーが発生した日付（YYYY-MM-DD形式）
+2. **エラーメッセージ**: 実際に表示されたエラーメッセージ（コードブロックで記載）
+3. **原因**: エラーの原因を箇条書きで記載
+4. **解決策**: 解決手順をコマンド付きで記載
+5. **確認コマンド**: 解決後の確認方法
+6. **ステータス**: 解決済み / 未解決
+
+### 記録のタイミング
+- エラー発生直後に記録を開始
+- 解決策が判明した時点で更新
+- 同種のエラーが再発した場合は追記
+
+### TROUBLESHOOTING.md の構成
+```markdown
+### 問題 X: [問題のタイトル]
+
+**発生日**: YYYY-MM-DD
+
+**エラーメッセージ**:
+```
+[エラーメッセージ]
+```
+
+**原因**:
+- [原因1]
+- [原因2]
+
+**解決策**:
+```bash
+[解決コマンド]
+```
+
+**確認コマンド**:
+```bash
+[確認コマンド]
+```
+
+**ステータス**: [x] 解決済み / [ ] 未解決
+```
+
+### 記録の目的
+- 将来同じエラーに遭遇した際の参照資料
+- 書籍・技術記事執筆時の情報源
+- 他の開発者への知識共有
+
+---
 
 ## Code Quality Standards
 

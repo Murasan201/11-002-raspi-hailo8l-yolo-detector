@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+hailort*.log
+gstshark_*/
+
+# Output files
+output/
+logs/
+
+# Model files (use symlinks or download separately)
+models/*.hef
+
+# Local configuration
+.mcp.json
+
+# OS files
+.DS_Store
+Thumbs.db

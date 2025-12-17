@@ -35,7 +35,9 @@ except ImportError:
 try:
     import hailo_platform
     from hailo_platform import (HEF, VDevice, HailoStreamInterface,
-                               InferVStreams, ConfigureParams)
+                               InferVStreams, ConfigureParams,
+                               InputVStreamParams, OutputVStreamParams,
+                               FormatType)
     HAILO_AVAILABLE = True
 except ImportError:
     HAILO_AVAILABLE = False
@@ -55,18 +57,20 @@ class YOLODetector:
         YOLODetectorの初期化
 
         Args:
-            model_path: HEFモデルファイルのパス
-            conf_threshold: 信頼度閾値
-            iou_threshold: IoU閾値（NMS用）
+            model_path (str): HEFモデルファイルのパス（例: 'models/yolov8s_h8l.hef'）
+            conf_threshold (float): 信頼度閾値（0.0-1.0、デフォルト: 0.25）
+            iou_threshold (float): IoU閾値（NMS用、デフォルト: 0.45）
         """
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.device = None
+        self.hef = None
         self.network_group = None
-        self.network_group_params = None
-        self.input_vstreams = None
-        self.output_vstreams = None
+        self.input_vstreams_params = None
+        self.output_vstreams_params = None
+        self.input_name = None
+        self.output_name = None
 
         # COCO データセットのクラス名
         self.class_names = [
@@ -90,6 +94,7 @@ class YOLODetector:
         """
         Hailoデバイスとモデルの初期化
         HEFファイルを読み込んでHailo-8Lデバイスを設定します。
+        新しいHailoRT API（v4.x）に対応しています。
         """
         if not HAILO_AVAILABLE:
             print("警告: HailoRT SDK が利用できません。CPUモードで動作します。")
@@ -108,17 +113,32 @@ class YOLODetector:
             self.device = VDevice()
 
             # HEF（Hailo Execution Format）ファイルの読み込み
-            hef = HEF(self.model_path)
+            self.hef = HEF(self.model_path)
+
+            # 入出力ストリーム情報の取得
+            input_vstream_infos = self.hef.get_input_vstream_infos()
+            output_vstream_infos = self.hef.get_output_vstream_infos()
+
+            # 入出力名の保存（推論時に使用）
+            self.input_name = input_vstream_infos[0].name
+            self.output_name = output_vstream_infos[0].name
+
+            print(f"入力レイヤー: {self.input_name}")
+            print(f"出力レイヤー: {self.output_name}")
 
             # ネットワークグループの設定（モデルをHailoデバイスにロード）
-            self.network_group = self.device.configure(hef)[0]
-            self.network_group_params = self.network_group.create_params()
+            configure_params = ConfigureParams.create_from_hef(
+                hef=self.hef, interface=HailoStreamInterface.PCIe)
+            network_groups = self.device.configure(self.hef, configure_params)
+            self.network_group = network_groups[0]
 
-            # 入出力ストリームの準備（推論用のデータ入出力パイプライン）
-            self.input_vstreams = InferVStreams.create_input_vstreams(
-                self.network_group, self.network_group_params)
-            self.output_vstreams = InferVStreams.create_output_vstreams(
-                self.network_group, self.network_group_params)
+            # 入出力VStreamsパラメータの作成
+            # 入力: UINT8形式（0-255の画像データ）
+            # 出力: FLOAT32形式（NMS後処理済みの検出結果）
+            self.input_vstreams_params = InputVStreamParams.make(
+                self.network_group, format_type=FormatType.UINT8)
+            self.output_vstreams_params = OutputVStreamParams.make(
+                self.network_group, format_type=FormatType.FLOAT32)
 
             print("Hailo-8L デバイスが正常に初期化されました。")
 
@@ -132,14 +152,14 @@ class YOLODetector:
                         target_size: Tuple[int, int] = (640, 640)
                         ) -> np.ndarray:
         """
-        画像の前処理（リサイズ、RGB変換、正規化）
+        画像の前処理（リサイズ、RGB変換）
 
         Args:
-            image (np.ndarray): 入力画像（BGRフォーマット）
-            target_size (Tuple[int, int]): 目標サイズ (width, height)
+            image (np.ndarray): 入力画像（BGRフォーマット、OpenCVから取得）
+            target_size (Tuple[int, int]): 目標サイズ (width, height)、デフォルト: (640, 640)
 
         Returns:
-            np.ndarray: 前処理済み画像（正規化済み、バッチ次元付き）
+            np.ndarray: 前処理済み画像（UINT8形式、shape: (1, 640, 640, 3)）
         """
         # リサイズ：入力画像をモデルの入力サイズに統一
         resized = cv2.resize(image, target_size)
@@ -147,24 +167,30 @@ class YOLODetector:
         # RGB変換：OpenCVはBGR形式ですが、YOLOはRGB形式を期待
         rgb_image = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 
-        # 正規化 (0-255 -> 0-1)：ニューラルネットワークは0-1範囲の入力を期待
-        normalized = rgb_image.astype(np.float32) / 255.0
+        # HailoRT v4.x では入力は UINT8 形式（0-255）のまま使用
+        # 正規化はHailo内部で自動的に行われる
+        preprocessed = rgb_image.astype(np.uint8)
 
         # バッチ次元の追加：Hailo推論APIはバッチ処理に対応しているため、
         # （バッチサイズ, 高さ, 幅, チャンネル）形式に変更
-        preprocessed = np.expand_dims(normalized, axis=0)
+        preprocessed = np.expand_dims(preprocessed, axis=0)
 
         return preprocessed
 
-    def postprocess_detections(self, outputs: List[np.ndarray],
+    def postprocess_detections(self, outputs: List,
                               original_shape: Tuple[int, int],
                               input_shape: Tuple[int, int] = (640, 640)
                               ) -> List[Dict[str, Any]]:
         """
-        推論結果の後処理（座標変換、NMS適用）
+        推論結果の後処理（座標変換）
+
+        HailoRT v4.x のNMS後処理済み出力に対応しています。
+        出力形式: [batch][class_id] = np.ndarray(N, 5)
+        各検出は [y1, x1, y2, x2, confidence] の形式です。
+        座標は0-1の正規化値で返されるため、ピクセル座標に変換します。
 
         Args:
-            outputs (List[np.ndarray]): モデルの出力（YOLOv8形式）
+            outputs (List): モデルの出力（NMS後処理済み）
             original_shape (Tuple[int, int]): 元画像のサイズ (height, width)
             input_shape (Tuple[int, int]): 入力画像のサイズ (height, width)
 
@@ -177,55 +203,61 @@ class YOLODetector:
         """
         detections = []
 
-        if not outputs:
+        if not outputs or len(outputs) == 0:
             return detections
 
-        # YOLO出力の解析（YOLOv8形式）：[x_center, y_center, w, h, obj_conf, class_scores...]
-        output = outputs[0]
+        # HailoRT v4.x NMS後処理済み出力の解析
+        # outputs[0] はバッチの最初の結果（1フレーム分）
+        # outputs[0][class_id] は各クラスの検出結果 (N, 5) 形式
+        batch_output = outputs[0]
 
-        # スケール計算：入力サイズ(640x640)から元画像サイズへの変換係数
-        # これは画像をリサイズしたため、出力座標を元画像スケールに変換する必要がある
-        scale_x = original_shape[1] / input_shape[1]
-        scale_y = original_shape[0] / input_shape[0]
+        # 元画像のサイズ
+        orig_h, orig_w = original_shape
 
-        # 各検出結果を処理
-        for detection in output:
-            # detection[4] はオブジェクト確信度（物体が存在する確率）
-            confidence = detection[4]
+        # 各クラスの検出結果を処理
+        for class_id, class_detections in enumerate(batch_output):
+            if not isinstance(class_detections, np.ndarray):
+                continue
 
-            if confidence > self.conf_threshold:
-                # バウンディングボックスの座標（YOLO形式：中心座標と幅高さ）
-                x_center, y_center, width, height = detection[:4]
+            if class_detections.size == 0:
+                continue
 
-                # 元画像サイズに変換
-                x_center *= scale_x
-                y_center *= scale_y
-                width *= scale_x
-                height *= scale_y
+            # 各検出を処理
+            for detection in class_detections:
+                # HailoRT NMS出力形式: [y1, x1, y2, x2, confidence]
+                # 座標は0-1の正規化値
+                y1_norm, x1_norm, y2_norm, x2_norm, confidence = detection
 
-                # 中心座標と幅高さから左上・右下座標に変換
-                x1 = int(x_center - width / 2)
-                y1 = int(y_center - height / 2)
-                x2 = int(x_center + width / 2)
-                y2 = int(y_center + height / 2)
+                if confidence < self.conf_threshold:
+                    continue
 
-                # クラス確率の処理（detection[5:]に各クラスの確率が含まれる）
-                class_scores = detection[5:]
-                class_id = np.argmax(class_scores)
-                class_confidence = class_scores[class_id]
+                # 正規化座標を元画像のピクセル座標に変換
+                # 正規化値（0-1）を直接元画像サイズに乗算
+                x1 = int(x1_norm * orig_w)
+                y1 = int(y1_norm * orig_h)
+                x2 = int(x2_norm * orig_w)
+                y2 = int(y2_norm * orig_h)
 
-                if class_confidence > self.conf_threshold:
+                # 座標の境界チェック
+                x1 = max(0, min(x1, orig_w - 1))
+                y1 = max(0, min(y1, orig_h - 1))
+                x2 = max(0, min(x2, orig_w))
+                y2 = max(0, min(y2, orig_h))
+
+                # 有効なバウンディングボックスのみ追加
+                if x2 > x1 and y2 > y1:
                     detections.append({
                         'bbox': [x1, y1, x2, y2],
-                        'confidence': float(class_confidence),
+                        'confidence': float(confidence),
                         'class_id': int(class_id),
                         'class_name': (self.class_names[class_id]
                                      if class_id < len(self.class_names)
                                      else f'class_{class_id}')
                     })
 
-        # NMS（Non-Maximum Suppression）の適用：重なっているボックスを除外
-        detections = self._apply_nms(detections)
+        # NMS は Hailo 側で既に適用済みなので、ここでは不要
+        # ただし、信頼度順にソートして返す
+        detections.sort(key=lambda x: x['confidence'], reverse=True)
 
         return detections
 
@@ -260,10 +292,14 @@ class YOLODetector:
         画像から物体検出を実行
 
         Args:
-            image (np.ndarray): 入力画像（BGRフォーマット）
+            image (np.ndarray): 入力画像（BGRフォーマット、任意の解像度）
 
         Returns:
-            List[Dict[str, Any]]: 検出結果のリスト
+            List[Dict[str, Any]]: 検出結果のリスト。各辞書は以下を含む:
+                - 'bbox' (list): バウンディングボックス座標 [x1, y1, x2, y2]
+                - 'confidence' (float): 信頼度スコア（0.0-1.0）
+                - 'class_id' (int): クラスID（0-79、COCOデータセット）
+                - 'class_name' (str): クラス名（例: 'person', 'car'）
         """
         if self.device is None or not HAILO_AVAILABLE:
             # Hailoが利用できない場合、CPUモードでのダミー検出（テスト用）
@@ -274,16 +310,19 @@ class YOLODetector:
             preprocessed = self.preprocess_image(image)
 
             # 推論実行：Hailo-8Lで高速推論を実行
-            with self.network_group.activate(self.network_group_params):
-                # 入力データの設定
-                input_dict = {name: preprocessed
-                            for name in self.input_vstreams.keys()}
+            # HailoRT v4.x API を使用
+            with self.network_group.activate():
+                with InferVStreams(self.network_group,
+                                  self.input_vstreams_params,
+                                  self.output_vstreams_params) as infer_pipeline:
+                    # 入力データの設定
+                    input_dict = {self.input_name: preprocessed}
 
-                # 推論実行
-                output_dict = self.network_group.infer(input_dict)
+                    # 推論実行
+                    output_dict = infer_pipeline.infer(input_dict)
 
-                # 出力の取得
-                outputs = list(output_dict.values())
+                    # 出力の取得（NMS後処理済みの結果）
+                    outputs = output_dict[self.output_name]
 
             # 後処理：推論結果から物体情報を抽出
             detections = self.postprocess_detections(outputs, image.shape[:2])
@@ -293,6 +332,8 @@ class YOLODetector:
         except Exception as e:
             print(f"エラー: 推論に失敗しました: {e}")
             print("対処方法: モデルファイルとHailoデバイスの接続を確認してください")
+            import traceback
+            traceback.print_exc()
             return []
 
     def _dummy_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -326,16 +367,18 @@ class CameraManager:
     """
 
     def __init__(self, resolution: Tuple[int, int] = (1280, 720),
-                 device_id: int = 0):
+                 device_id: int = 0, flip_vertical: bool = False):
         """
         カメラマネージャーの初期化
 
         Args:
-            resolution (Tuple[int, int]): カメラ解像度 (width, height)
-            device_id (int): カメラデバイスID
+            resolution (Tuple[int, int]): カメラ解像度 (width, height)、デフォルト: (1280, 720)
+            device_id (int): カメラデバイスID（USB Webカメラ用、デフォルト: 0）
+            flip_vertical (bool): 画像を上下反転するかどうか（カメラを逆さまに設置した場合に使用）
         """
         self.resolution = resolution
         self.device_id = device_id
+        self.flip_vertical = flip_vertical
         self.camera = None
         self.cap = None
         self.use_picamera = PICAMERA2_AVAILABLE
@@ -397,24 +440,29 @@ class CameraManager:
         カメラからフレームを読み取る
 
         Returns:
-            Optional[np.ndarray]: フレーム画像（BGRフォーマット）
-                読み取り失敗時はNoneを返す
+            Optional[np.ndarray]: フレーム画像（BGRフォーマット、shape: (height, width, 3)）
+                読み取り失敗時はNoneを返す。flip_vertical=Trueの場合は上下反転済み。
         """
         try:
+            frame = None
+
             if self.use_picamera and self.camera:
                 # Picamera2からフレーム取得（RGB形式）
                 frame = self.camera.capture_array()
                 # RGB -> BGR 変換（OpenCVはBGR形式を使用）
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                return frame
 
             elif self.cap:
                 # USB Webカメラからフレーム取得
                 ret, frame = self.cap.read()
-                if ret:
-                    return frame
-                else:
+                if not ret:
                     return None
+
+            # 上下反転処理（カメラの取り付け向きに対応）
+            if frame is not None and self.flip_vertical:
+                frame = cv2.flip(frame, 0)  # 0: 上下反転
+
+            return frame
 
         except Exception as e:
             print(f"エラー: フレーム読み取りに失敗しました: {e}")
@@ -465,8 +513,8 @@ class DetectionLogger:
         検出結果のCSVログ保存
 
         Args:
-            frame_id (int): フレームID
-            detections (List[Dict[str, Any]]): 検出結果のリスト
+            frame_id (int): フレームID（0から始まる連番）
+            detections (List[Dict[str, Any]]): 検出結果のリスト（YOLODetector.detect()の戻り値）
         """
         timestamp = datetime.now().isoformat()
 
@@ -615,6 +663,9 @@ def main():
     parser.add_argument('--log', action='store_true',
                        help='検出結果をCSVログに保存する')
 
+    parser.add_argument('--flip', action='store_true',
+                       help='カメラ映像を上下反転する（カメラを逆さまに設置した場合）')
+
     args = parser.parse_args()
 
     print("=== Raspberry Pi Hailo-8L YOLO Detector ===")
@@ -622,13 +673,15 @@ def main():
     print(f"解像度: {args.res[0]}x{args.res[1]}")
     print(f"信頼度閾値: {args.conf}")
     print(f"IoU閾値: {args.iou}")
+    if args.flip:
+        print("カメラ映像: 上下反転")
 
     try:
         # YOLODetectorの初期化
         detector = YOLODetector(args.model, args.conf, args.iou)
 
         # カメラマネージャーの初期化
-        camera = CameraManager(args.res, args.device)
+        camera = CameraManager(args.res, args.device, flip_vertical=args.flip)
 
         # ログ管理の初期化
         logger = None
@@ -695,9 +748,10 @@ def main():
 
             frame_id += 1
 
-            # キー入力チェック
+            # キー入力チェック（qキーまたはESCキーで終了）
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key == ord('q') or key == ord('Q') or key == 27:  # 27 = ESC
+                print("\n終了キーが押されました")
                 break
 
     except KeyboardInterrupt:

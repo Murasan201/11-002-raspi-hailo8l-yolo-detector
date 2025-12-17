@@ -45,39 +45,72 @@ sudo raspi-config
 - 再起動後、カメラの動作確認：
 
 ```bash
-libcamera-hello --preview
+# Debian 13 (trixie) / Raspberry Pi OS 最新版
+rpicam-hello --list-cameras
+
+# 旧バージョン（Debian 12 / bookworm）
+libcamera-hello --list-cameras
 ```
 
 ### 3. HailoRT SDK のインストール
 
-公式手順に従ってHailoRT SDKとカーネルモジュールを導入してください：
+Raspberry Pi OS では `hailo-all` メタパッケージで一括インストールできます：
 
 ```bash
+# HailoRT SDK と関連パッケージのインストール
+sudo apt update
+sudo apt install -y hailo-all
+
+# 再起動（カーネルモジュールの読み込みに必要）
+sudo reboot
+
 # Hailo デバイスの認識確認
 hailortcli fw-control identify
+```
+
+正常に認識されると、以下のような情報が表示されます：
+```
+Device Architecture: HAILO8L
+Firmware Version: 4.x.x
 ```
 
 ### 4. Python環境のセットアップ
 
 ```bash
-# 仮想環境の作成
-python3 -m venv .venv
+# 仮想環境の作成（--system-site-packages でシステムの HailoRT にアクセス可能にする）
+python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
 
 # 依存関係のインストール
 pip install -r requirements.txt
+
+# HailoRT が使えるか確認
+python3 -c "from hailo_platform import HEF; print('HailoRT OK')"
 ```
 
 ### 5. モデルファイルの配置
 
-Hailo-8L用に最適化されたYOLOモデル（`.hef`形式）を `models/` ディレクトリに配置してください：
+`hailo-all` パッケージをインストールすると、モデルファイルが `/usr/share/hailo-models/` に配置されます。
+シンボリックリンクを作成して使用します：
 
 ```bash
-# 例: YOLOv8n Hailoモデル
-models/yolov8n_hailo.hef
+# models ディレクトリの作成
+mkdir -p models
+
+# hailo-all パッケージのモデルへのシンボリックリンク作成（推奨）
+ln -sf /usr/share/hailo-models/yolov8s_h8l.hef models/yolov8s_h8l.hef
+ln -sf /usr/share/hailo-models/yolov6n_h8l.hef models/yolov6n_h8l.hef
+
+# 利用可能なモデルの確認
+ls -la /usr/share/hailo-models/
 ```
 
-**注意**: モデルファイルは配布条件に留意し、各自で取得・配置してください。
+**利用可能なモデル**:
+| モデル | サイズ | 特徴 |
+|--------|--------|------|
+| yolov6n_h8l.hef | 14.5MB | 軽量・高速 |
+| yolov8s_h8l.hef | 36.6MB | バランス型（**推奨**） |
+| yolox_s_leaky_h8l_rpi.hef | 22.4MB | 高精度 |
 
 ## 使用方法
 
@@ -105,6 +138,7 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
 | `--conf` | `0.25` | 信頼度閾値（0.0-1.0） |
 | `--iou` | `0.45` | IoU閾値（NMS用、0.0-1.0） |
 | `--device` | `0` | カメラデバイスID |
+| `--flip` | - | カメラ映像を上下反転（カメラを逆さまに設置した場合） |
 | `--save` | - | 動画保存を有効化 |
 | `--log` | - | 検出結果のCSVログ保存を有効化 |
 
@@ -119,6 +153,9 @@ python raspi_hailo8l_yolo.py --conf 0.5 --iou 0.3
 
 # 動画保存とログ出力を有効化
 python raspi_hailo8l_yolo.py --save --log
+
+# カメラを逆さまに設置している場合（上下反転）
+python raspi_hailo8l_yolo.py --flip
 
 # USB Webカメラを使用（Camera Module V3が利用できない場合）
 python raspi_hailo8l_yolo.py --device 0
@@ -198,7 +235,7 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
 
 ### 共通操作
 
-- **終了**: `q` キーを押す
+- **終了**: `q`、`Q`、または `ESC` キーを押す
 - **画面表示**: リアルタイムで検出結果が表示されます
   - 緑色の矩形: バウンディングボックス
   - ラベル: クラス名と信頼度
@@ -229,6 +266,8 @@ timestamp,frame_id,class_name,confidence,x1,y1,x2,y2
 ```
 
 ## トラブルシューティング
+
+詳細なトラブルシューティング情報は **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** を参照してください。
 
 ### よくある問題
 
@@ -303,6 +342,23 @@ timestamp,frame_id,class_name,confidence,x1,y1,x2,y2
 
 `YOLODetector` クラスの `class_names` リストを編集することで、検出対象クラスを変更できます。
 
+## ドキュメント
+
+プロジェクトのすべての技術ドキュメント、開発ガイドライン、コーディング規約は **[docs/](./docs/)** ディレクトリに集約されています。
+
+### 📚 主要ドキュメント
+
+- **[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)** - 🔧 **環境構築ガイド（初回セットアップ必須）**
+- **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** - 🛠️ **トラブルシューティング（エラー解決）**
+- **[docs/README.md](./docs/README.md)** - ドキュメント索引（全ドキュメントの一覧と説明）
+- **[docs/11_002_raspi_hailo_8_l_yolo_detector.md](./docs/11_002_raspi_hailo_8_l_yolo_detector.md)** - 要件定義書（プロジェクト仕様）
+- **[docs/CLAUDE.md](./docs/CLAUDE.md)** - Claude Code開発ルール
+- **[docs/python_coding_guidelines.md](./docs/python_coding_guidelines.md)** - Pythonコーディング規約
+- **[docs/COMMENT_STYLE_GUIDE.md](./docs/COMMENT_STYLE_GUIDE.md)** - コメント記載標準
+
+**初めて使う場合**: [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) から環境構築を開始してください。
+**開発を行う場合**: [docs/README.md](./docs/README.md) から関連ドキュメントを確認してください。
+
 ## ライセンス
 
 - ソースコード: MIT License
@@ -316,10 +372,11 @@ timestamp,frame_id,class_name,confidence,x1,y1,x2,y2
 
 ## バージョン情報
 
-- Version: 1.0.0
-- 最終更新: 2024-12-29
-- 対応OS: Raspberry Pi OS Bookworm以降
+- Version: 1.1.0
+- 最終更新: 2025-12-17
+- 対応OS: Raspberry Pi OS Bookworm以降（Debian 13 trixie 対応）
 - 対応ハードウェア: Raspberry Pi 5 + Hailo-8L AI Kit
+- HailoRT SDK: v4.x 対応
 
 ---
 
