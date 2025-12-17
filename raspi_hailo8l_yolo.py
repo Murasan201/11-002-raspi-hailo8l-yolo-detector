@@ -954,16 +954,29 @@ def draw_detections(image: np.ndarray, detections: List[Dict[str, Any]],
         # ラベルの描画
         label = f"{class_name}: {confidence:.2f}"
         label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        label_height = label_size[1] + 10
+
+        # ラベル位置の決定（画面上端に近い場合はボックス内側に表示）
+        if y1 - label_height < 0:
+            # ボックスの内側上部にラベルを表示
+            label_bg_y1 = y1
+            label_bg_y2 = y1 + label_height
+            label_text_y = y1 + label_size[1] + 5
+        else:
+            # ボックスの上にラベルを表示（通常）
+            label_bg_y1 = y1 - label_height
+            label_bg_y2 = y1
+            label_text_y = y1 - 5
 
         # ラベル背景
         cv2.rectangle(result_image,
-                     (x1, y1 - label_size[1] - 10),
-                     (x1 + label_size[0], y1),
+                     (x1, label_bg_y1),
+                     (x1 + label_size[0], label_bg_y2),
                      color, -1)
 
         # ラベルテキスト
         cv2.putText(result_image, label,
-                   (x1, y1 - 5),
+                   (x1, label_text_y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     return result_image
