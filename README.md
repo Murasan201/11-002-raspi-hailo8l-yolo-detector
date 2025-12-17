@@ -133,7 +133,7 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
 
 | オプション | デフォルト | 説明 |
 |----------|----------|------|
-| `--model` | `models/yolov8n_hailo.hef` | HEFモデルファイルのパス |
+| `--model` | `models/yolov8s_h8l.hef` | HEFモデルファイルのパス |
 | `--res` | `1280x720` | カメラ解像度（640x480, 1280x720, 1920x1080） |
 | `--conf` | `0.25` | 信頼度閾値（0.0-1.0） |
 | `--iou` | `0.45` | IoU閾値（NMS用、0.0-1.0） |
@@ -141,6 +141,8 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
 | `--flip` | - | カメラ映像を上下反転（カメラを逆さまに設置した場合） |
 | `--save` | - | 動画保存を有効化 |
 | `--log` | - | 検出結果のCSVログ保存を有効化 |
+| `--classes` | - | 検出対象クラス（スペース区切りで複数指定可能） |
+| `--list-classes` | - | 使用可能なクラス一覧を表示して終了 |
 
 ### 使用例
 
@@ -159,7 +161,29 @@ python raspi_hailo8l_yolo.py --flip
 
 # USB Webカメラを使用（Camera Module V3が利用できない場合）
 python raspi_hailo8l_yolo.py --device 0
+
+# 特定のクラスのみ検出（人物のみ）
+python raspi_hailo8l_yolo.py --classes person
+
+# 複数クラスを検出（人物、車、犬）
+python raspi_hailo8l_yolo.py --classes person car dog
+
+# 使用可能なクラス一覧を表示
+python raspi_hailo8l_yolo.py --list-classes
 ```
+
+### クラスフィルタリング
+
+`--classes` オプションで特定の種類のオブジェクトのみを検出できます。
+デフォルトでは COCO データセットの全80クラスを検出します。
+
+**主なクラス例**:
+- **人物・動物**: person, cat, dog, bird, horse, cow, elephant, bear
+- **乗り物**: car, motorcycle, bus, truck, bicycle, airplane, boat, train
+- **日用品**: bottle, cup, chair, couch, bed, tv, laptop, cell phone
+- **食べ物**: apple, banana, orange, pizza, cake, sandwich
+
+全クラス一覧は `--list-classes` オプションで確認できます。
 
 ### USB Webcam版（ロジクール等対応・高性能版）
 
