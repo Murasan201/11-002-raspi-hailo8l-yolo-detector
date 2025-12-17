@@ -73,7 +73,7 @@
 #### Camera Module V3 版共通オプション
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
-| `--model` | `models/yolov8n_hailo.hef` | HEFモデルファイルのパス |
+| `--model` | `models/yolov8s_h8l.hef` | HEFモデルファイルのパス |
 | `--res` | `1280x720` | カメラ解像度 |
 | `--conf` | `0.25` | 信頼度閾値（0.0-1.0） |
 | `--iou` | `0.45` | IoU閾値（NMS用） |
@@ -81,6 +81,8 @@
 | `--flip` | - | カメラ映像を上下反転 |
 | `--save` | - | 動画保存を有効化 |
 | `--log` | - | CSVログ保存を有効化 |
+| `--classes` | - | 検出対象クラス（スペース区切り） |
+| `--list-classes` | - | 使用可能なクラス一覧を表示 |
 
 #### USB Webcam 版専用オプション
 | オプション | デフォルト | 説明 |
@@ -94,6 +96,63 @@
 ### FR-5: 操作
 - **終了**: `q` キー、`Q` キー、または `ESC` キーで安全終了
 - **フルスクリーン切替**（USB版）: `f` キー
+
+### FR-6: クラスフィルタリング
+特定の種類のオブジェクトのみを検出する機能。
+
+#### 機能概要
+- **デフォルト**: 全80クラス（COCO データセット）を検出
+- **フィルタリング**: `--classes` オプションで検出対象を限定
+- **クラス一覧表示**: `--list-classes` オプションで使用可能なクラス名を確認
+
+#### 使用例
+```bash
+# 人物のみ検出
+python raspi_hailo8l_yolo.py --classes person
+
+# 複数クラスを指定（人物、車、犬）
+python raspi_hailo8l_yolo.py --classes person car dog
+
+# 使用可能なクラス一覧を表示
+python raspi_hailo8l_yolo.py --list-classes
+```
+
+#### COCO 80クラス一覧
+| ID | クラス名 | ID | クラス名 | ID | クラス名 | ID | クラス名 |
+|----|----------|----|-----------|----|----------|----|-----------|
+| 0 | person | 20 | elephant | 40 | wine glass | 60 | dining table |
+| 1 | bicycle | 21 | bear | 41 | cup | 61 | toilet |
+| 2 | car | 22 | zebra | 42 | fork | 62 | tv |
+| 3 | motorcycle | 23 | giraffe | 43 | knife | 63 | laptop |
+| 4 | airplane | 24 | backpack | 44 | spoon | 64 | mouse |
+| 5 | bus | 25 | umbrella | 45 | bowl | 65 | remote |
+| 6 | train | 26 | handbag | 46 | banana | 66 | keyboard |
+| 7 | truck | 27 | tie | 47 | apple | 67 | cell phone |
+| 8 | boat | 28 | suitcase | 48 | sandwich | 68 | microwave |
+| 9 | traffic light | 29 | frisbee | 49 | orange | 69 | oven |
+| 10 | fire hydrant | 30 | skis | 50 | broccoli | 70 | toaster |
+| 11 | stop sign | 31 | snowboard | 51 | carrot | 71 | sink |
+| 12 | parking meter | 32 | sports ball | 52 | hot dog | 72 | refrigerator |
+| 13 | bench | 33 | kite | 53 | pizza | 73 | book |
+| 14 | bird | 34 | baseball bat | 54 | donut | 74 | clock |
+| 15 | cat | 35 | baseball glove | 55 | cake | 75 | vase |
+| 16 | dog | 36 | skateboard | 56 | chair | 76 | scissors |
+| 17 | horse | 37 | surfboard | 57 | couch | 77 | teddy bear |
+| 18 | sheep | 38 | tennis racket | 58 | potted plant | 78 | hair drier |
+| 19 | cow | 39 | bottle | 59 | bed | 79 | toothbrush |
+
+#### カテゴリ別分類
+- **人物**: person
+- **乗り物**: bicycle, car, motorcycle, airplane, bus, train, truck, boat
+- **動物**: bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe
+- **アクセサリ**: backpack, umbrella, handbag, tie, suitcase
+- **スポーツ**: frisbee, skis, snowboard, sports ball, kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket
+- **食器**: bottle, wine glass, cup, fork, knife, spoon, bowl
+- **食べ物**: banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake
+- **家具**: chair, couch, potted plant, bed, dining table, toilet
+- **電子機器**: tv, laptop, mouse, remote, keyboard, cell phone
+- **家電**: microwave, oven, toaster, sink, refrigerator
+- **その他**: traffic light, fire hydrant, stop sign, parking meter, bench, book, clock, vase, scissors, teddy bear, hair drier, toothbrush
 
 ## 5. 非機能要件（NFR）
 
@@ -173,7 +232,7 @@ ln -sf /usr/share/hailo-models/yolov6n_h8l.hef models/yolov6n_h8l.hef
 ```bash
 source .venv/bin/activate
 
-# Camera Module V3 版
+# Camera Module V3 版（基本）
 python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
 
 # カメラを逆さまに設置している場合
@@ -181,6 +240,15 @@ python raspi_hailo8l_yolo.py --flip
 
 # 動画保存する場合
 python raspi_hailo8l_yolo.py --res 1280x720 --save
+
+# 特定クラスのみ検出（人物のみ）
+python raspi_hailo8l_yolo.py --classes person
+
+# 複数クラスを検出（人物、車、犬）
+python raspi_hailo8l_yolo.py --classes person car dog
+
+# 使用可能なクラス一覧を表示
+python raspi_hailo8l_yolo.py --list-classes
 
 # USB Webcam 版
 python raspi_hailo8l_yolo_usb.py --network yolov8s --width 1280 --height 720
@@ -216,6 +284,9 @@ timestamp,frame_id,class_name,confidence,x1,y1,x2,y2
 - [ ] `--log` で CSV ログが保存される
 - [ ] `--conf` 変更で検出件数が変化する
 - [ ] `q` / `Q` / `ESC` キーで正常終了する
+- [ ] `--classes` で指定したクラスのみ検出される
+- [ ] `--list-classes` でクラス一覧が表示される
+- [ ] クラスフィルタリング時もラベル（クラス名・信頼度）が表示される
 - [ ] 10 分連続動作でクラッシュ/著しい熱スロットリングがない
 
 ## 13. 技術詳細
