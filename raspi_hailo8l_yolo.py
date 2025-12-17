@@ -53,6 +53,28 @@ __all__ = [
     # ロガー設定
     'setup_logging',
     'get_logger',
+    # 定数
+    'COCO_CLASSES',
+]
+
+# ============================================================================
+# 定数定義
+# ============================================================================
+# COCO データセットのクラス名（80クラス）
+# YOLODetectorのtarget_classesパラメータで使用可能
+COCO_CLASSES = [
+    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
+    'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
+    'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
+    'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+    'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
+    'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+    'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+    'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+    'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+    'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
+    'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier',
+    'toothbrush'
 ]
 
 # ============================================================================
@@ -226,10 +248,16 @@ class YOLODetector:
     初心者向けに設計され、前処理・推論・後処理が明確に分離されています。
 
     ライブラリとして使用する場合の例:
-        from raspi_hailo8l_yolo import YOLODetector
+        from raspi_hailo8l_yolo import YOLODetector, COCO_CLASSES
 
-        # 検出器の初期化
-        detector = YOLODetector("models/yolov8s_h8l.hef", conf_threshold=0.3)
+        # 全クラス検出（デフォルト）
+        detector = YOLODetector("models/yolov8s_h8l.hef")
+
+        # 特定クラスのみ検出（人と車のみ）
+        detector = YOLODetector(
+            "models/yolov8s_h8l.hef",
+            target_classes=['person', 'car']
+        )
 
         # 画像から物体検出
         import cv2
@@ -239,10 +267,14 @@ class YOLODetector:
         # 結果の処理
         for det in detections:
             print(f"{det['class_name']}: {det['confidence']:.2f}")
+
+        # 検出対象クラスを動的に変更
+        detector.set_target_classes(['dog', 'cat'])
     """
 
     def __init__(self, model_path: str, conf_threshold: float = 0.25,
-                 iou_threshold: float = 0.45):
+                 iou_threshold: float = 0.45,
+                 target_classes: Optional[List[str]] = None):
         """
         YOLODetectorの初期化
 
@@ -250,10 +282,15 @@ class YOLODetector:
             model_path (str): HEFモデルファイルのパス（例: 'models/yolov8s_h8l.hef'）
             conf_threshold (float): 信頼度閾値（0.0-1.0、デフォルト: 0.25）
             iou_threshold (float): IoU閾値（NMS用、デフォルト: 0.45）
+            target_classes (Optional[List[str]]): 検出対象のクラス名リスト
+                - None: 全クラスを検出（デフォルト）
+                - ['person', 'car']: 指定したクラスのみ検出
+                使用可能なクラス名は COCO_CLASSES を参照
 
         Raises:
             FileNotFoundError: モデルファイルが見つからない場合
             RuntimeError: Hailoデバイスの初期化に失敗した場合
+            ValueError: 無効なクラス名が指定された場合
         """
         self.model_path = model_path
         self.conf_threshold = conf_threshold
@@ -268,20 +305,12 @@ class YOLODetector:
         self._initialized = False
 
         # COCO データセットのクラス名（80クラス）
-        self.class_names = [
-            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
-            'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
-            'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
-            'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
-            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
-            'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
-            'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
-            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
-            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
-            'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
-            'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier',
-            'toothbrush'
-        ]
+        self.class_names = COCO_CLASSES.copy()
+
+        # 検出対象クラスの設定
+        self._target_class_ids: Optional[set] = None
+        if target_classes is not None:
+            self.set_target_classes(target_classes)
 
         self._initialize_hailo()
 
@@ -294,6 +323,105 @@ class YOLODetector:
             bool: 初期化済みの場合はTrue
         """
         return self._initialized
+
+    @property
+    def target_classes(self) -> Optional[List[str]]:
+        """
+        現在の検出対象クラス名リストを取得します。
+
+        Returns:
+            Optional[List[str]]: 検出対象クラス名のリスト。
+                Noneの場合は全クラスが対象。
+        """
+        if self._target_class_ids is None:
+            return None
+        return [self.class_names[i] for i in sorted(self._target_class_ids)]
+
+    def set_target_classes(self, class_names: Optional[List[str]]) -> None:
+        """
+        検出対象のクラスを設定します。
+
+        Args:
+            class_names (Optional[List[str]]): 検出対象のクラス名リスト
+                - None: 全クラスを検出（フィルタリング解除）
+                - ['person', 'car']: 指定したクラスのみ検出
+
+        Raises:
+            ValueError: 無効なクラス名が指定された場合
+
+        使用例:
+            # 人と車のみ検出
+            detector.set_target_classes(['person', 'car'])
+
+            # 全クラス検出に戻す
+            detector.set_target_classes(None)
+
+            # 動物のみ検出
+            detector.set_target_classes(['dog', 'cat', 'bird', 'horse'])
+        """
+        if class_names is None:
+            self._target_class_ids = None
+            _logger.info("全クラスを検出対象に設定しました")
+            return
+
+        # クラス名からIDへの変換と検証
+        class_ids = set()
+        invalid_classes = []
+
+        for name in class_names:
+            name_lower = name.lower().strip()
+            try:
+                # 大文字小文字を区別しない検索
+                class_id = next(
+                    i for i, n in enumerate(self.class_names)
+                    if n.lower() == name_lower
+                )
+                class_ids.add(class_id)
+            except StopIteration:
+                invalid_classes.append(name)
+
+        if invalid_classes:
+            available = ', '.join(self.class_names[:10]) + '...'
+            raise ValueError(
+                f"無効なクラス名が指定されました: {invalid_classes}\n"
+                f"使用可能なクラス名: {available}\n"
+                f"全クラスは COCO_CLASSES を参照してください"
+            )
+
+        self._target_class_ids = class_ids
+        _logger.info(f"検出対象クラスを設定しました: {class_names}")
+
+    def get_available_classes(self) -> List[str]:
+        """
+        使用可能な全クラス名のリストを取得します。
+
+        Returns:
+            List[str]: COCOデータセットの80クラス名リスト
+
+        使用例:
+            classes = detector.get_available_classes()
+            print(classes)  # ['person', 'bicycle', 'car', ...]
+        """
+        return self.class_names.copy()
+
+    def is_class_targeted(self, class_name: str) -> bool:
+        """
+        指定したクラスが検出対象かどうかを確認します。
+
+        Args:
+            class_name (str): 確認するクラス名
+
+        Returns:
+            bool: 検出対象の場合True
+        """
+        if self._target_class_ids is None:
+            return True
+
+        try:
+            class_id = self.class_names.index(class_name.lower().strip())
+            return class_id in self._target_class_ids
+        except ValueError:
+            return False
 
     def _initialize_hailo(self) -> None:
         """
@@ -420,6 +548,11 @@ class YOLODetector:
 
         # 各クラスの検出結果を処理
         for class_id, class_detections in enumerate(batch_output):
+            # ターゲットクラスが設定されている場合、対象外のクラスはスキップ
+            if self._target_class_ids is not None:
+                if class_id not in self._target_class_ids:
+                    continue
+
             if not isinstance(class_detections, np.ndarray):
                 continue
 
@@ -938,7 +1071,25 @@ def main():
     parser.add_argument('--flip', action='store_true',
                        help='カメラ映像を上下反転する（カメラを逆さまに設置した場合）')
 
+    parser.add_argument('--classes', type=str, nargs='+',
+                       default=None,
+                       help='検出対象のクラス名（スペース区切り、例: --classes person car dog）')
+
+    parser.add_argument('--list-classes', action='store_true',
+                       help='使用可能なクラス名の一覧を表示して終了')
+
     args = parser.parse_args()
+
+    # クラス一覧表示モード
+    if args.list_classes:
+        print("使用可能なクラス名（COCO 80クラス）:")
+        print("-" * 50)
+        for i, name in enumerate(COCO_CLASSES):
+            print(f"  {i:2d}: {name}")
+        print("-" * 50)
+        print(f"合計: {len(COCO_CLASSES)} クラス")
+        print("\n使用例: --classes person car dog")
+        return
 
     print("=== Raspberry Pi Hailo-8L YOLO Detector ===")
     print(f"モデル: {args.model}")
@@ -947,13 +1098,20 @@ def main():
     print(f"IoU閾値: {args.iou}")
     if args.flip:
         print("カメラ映像: 上下反転")
+    if args.classes:
+        print(f"検出対象クラス: {', '.join(args.classes)}")
+    else:
+        print("検出対象クラス: 全クラス（80種類）")
 
     camera = None
     video_writer = None
 
     try:
         # YOLODetectorの初期化
-        detector = YOLODetector(args.model, args.conf, args.iou)
+        detector = YOLODetector(
+            args.model, args.conf, args.iou,
+            target_classes=args.classes
+        )
 
         # カメラマネージャーの初期化
         camera = CameraManager(args.res, args.device, flip_vertical=args.flip)
