@@ -537,6 +537,200 @@ COCO_CLASSES: List[str]  # 80クラス
 
 ---
 
+## ライブラリAPI仕様
+
+本モジュールをライブラリとして使用する際のAPI仕様を定義する。
+
+### インポート
+
+```python
+from raspi_hailo8l_yolo import YOLODetector, CameraManager, draw_detections, COCO_CLASSES
+```
+
+---
+
+### YOLODetector
+
+YOLO物体検出器クラス（Hailo-8L対応）
+
+#### コンストラクタ
+
+```python
+YOLODetector(model_path, conf_threshold=0.25, target_classes=None)
+```
+
+| パラメータ | 型 | デフォルト | 必須 | 説明 |
+|-----------|-----|-----------|------|------|
+| `model_path` | `str` | - | ✓ | HEFモデルファイルのパス（例: `"models/yolov8s_h8l.hef"`） |
+| `conf_threshold` | `float` | `0.25` | - | 信頼度閾値（0.0〜1.0）。この値以上の検出結果のみ返す |
+| `target_classes` | `List[str]` or `None` | `None` | - | 検出対象のクラス名リスト。`None`で全80クラス検出 |
+
+**例外:**
+- `FileNotFoundError`: モデルファイルが見つからない場合
+- `RuntimeError`: Hailoデバイスの初期化に失敗した場合
+- `ValueError`: 無効なクラス名が指定された場合
+
+#### detect メソッド
+
+```python
+detect(image) -> List[Dict[str, Any]]
+```
+
+| パラメータ | 型 | 説明 |
+|-----------|-----|------|
+| `image` | `numpy.ndarray` | BGR形式の入力画像（shape: `(height, width, 3)`、dtype: `uint8`） |
+
+**戻り値:** `List[Dict[str, Any]]`
+
+検出結果のリスト。各要素は以下のキーを持つ辞書：
+
+| キー | 型 | 説明 |
+|------|-----|------|
+| `bbox` | `List[int]` | バウンディングボックス座標 `[x1, y1, x2, y2]`（ピクセル単位） |
+| `class_id` | `int` | クラスID（0〜79、COCOデータセット） |
+| `class_name` | `str` | クラス名（例: `"person"`, `"car"`） |
+| `confidence` | `float` | 信頼度スコア（0.0〜1.0） |
+
+---
+
+### CameraManager
+
+カメラ管理クラス（Camera Module V3用）
+
+#### コンストラクタ
+
+```python
+CameraManager(resolution=(1280, 720), device_id=0, flip_vertical=False)
+```
+
+| パラメータ | 型 | デフォルト | 必須 | 説明 |
+|-----------|-----|-----------|------|------|
+| `resolution` | `Tuple[int, int]` | `(1280, 720)` | - | カメラ解像度 `(width, height)` |
+| `device_id` | `int` | `0` | - | カメラデバイスID |
+| `flip_vertical` | `bool` | `False` | - | `True`で画像を上下反転（カメラを逆さまに設置した場合） |
+
+**対応解像度:**
+- `(640, 480)` - VGA
+- `(1280, 720)` - HD 720p（推奨）
+- `(1920, 1080)` - Full HD 1080p
+
+**例外:**
+- `RuntimeError`: Picamera2が利用できない場合、またはカメラの初期化に失敗した場合
+
+#### read_frame メソッド
+
+```python
+read_frame() -> Optional[numpy.ndarray]
+```
+
+| 戻り値 | 型 | 説明 |
+|--------|-----|------|
+| フレーム | `numpy.ndarray` | BGR形式の画像（shape: `(height, width, 3)`） |
+| 失敗時 | `None` | フレーム取得に失敗した場合 |
+
+#### release メソッド
+
+```python
+release() -> None
+```
+
+カメラリソースを解放する。使用後は必ず呼び出すこと。
+
+---
+
+### draw_detections
+
+画像に検出結果を描画する関数
+
+```python
+draw_detections(image, detections, color=(0, 255, 0), thickness=2) -> numpy.ndarray
+```
+
+| パラメータ | 型 | デフォルト | 必須 | 説明 |
+|-----------|-----|-----------|------|------|
+| `image` | `numpy.ndarray` | - | ✓ | BGR形式の入力画像 |
+| `detections` | `List[Dict]` | - | ✓ | `YOLODetector.detect()`の戻り値 |
+| `color` | `Tuple[int, int, int]` | `(0, 255, 0)` | - | バウンディングボックスの色（BGR形式、緑） |
+| `thickness` | `int` | `2` | - | 線の太さ（ピクセル） |
+
+**戻り値:** `numpy.ndarray` - バウンディングボックスとラベルが描画された画像
+
+---
+
+### COCO_CLASSES
+
+COCOデータセットの80クラス名リスト
+
+```python
+COCO_CLASSES: List[str]
+```
+
+| インデックス | クラス名 | インデックス | クラス名 |
+|-------------|---------|-------------|---------|
+| 0 | person | 40 | wine glass |
+| 1 | bicycle | 41 | cup |
+| 2 | car | 42 | fork |
+| 3 | motorcycle | 43 | knife |
+| 4 | airplane | 44 | spoon |
+| 5 | bus | 45 | bowl |
+| 6 | train | 46 | banana |
+| 7 | truck | 47 | apple |
+| 14 | bird | 48 | sandwich |
+| 15 | cat | 56 | chair |
+| 16 | dog | 57 | couch |
+| 17 | horse | 62 | tv |
+| ... | ... | ... | ... |
+
+※全80クラスは `COCO_CLASSES` を参照
+
+---
+
+### 使用例
+
+```python
+from raspi_hailo8l_yolo import YOLODetector, CameraManager, draw_detections, COCO_CLASSES
+import cv2
+
+# 初期化
+detector = YOLODetector(
+    model_path="models/yolov8s_h8l.hef",
+    conf_threshold=0.3,
+    target_classes=['person', 'car']  # 人と車のみ検出
+)
+
+camera = CameraManager(
+    resolution=(1280, 720),
+    flip_vertical=False
+)
+
+try:
+    while True:
+        # フレーム取得
+        frame = camera.read_frame()
+        if frame is None:
+            break
+
+        # 物体検出
+        detections = detector.detect(frame)
+
+        # 結果処理
+        for det in detections:
+            print(f"{det['class_name']}: {det['confidence']:.2f}")
+
+        # 描画
+        result = draw_detections(frame, detections)
+        cv2.imshow('Detection', result)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+finally:
+    camera.release()
+    cv2.destroyAllWindows()
+```
+
+---
+
 ## 変更履歴
 
 | 日付 | 内容 |
@@ -546,3 +740,4 @@ COCO_CLASSES: List[str]  # 80クラス
 | 2025-12-29 | MVP化検討（削減可能な機能一覧）を追加 |
 | 2025-12-29 | コメント削減方針を追加 |
 | 2025-12-29 | MVP版実施結果を追加 |
+| 2025-12-29 | ライブラリAPI仕様を追加 |
