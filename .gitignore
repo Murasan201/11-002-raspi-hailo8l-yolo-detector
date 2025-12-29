@@ -32,3 +32,4 @@ models/*.hef
 # OS files
 .DS_Store
 Thumbs.db
+reference/

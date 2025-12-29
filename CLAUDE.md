@@ -151,13 +151,32 @@ python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25
 
 ### File Organization
 ```
-├── raspi_hailo8l_yolo.py   # Main application
-├── requirements.txt        # Python dependencies
-├── README.md              # Setup and usage instructions
-├── models/                # Model files (user-provided)
-├── output/                # Saved videos/images
-└── logs/                  # Detection logs
+├── raspi_hailo8l_yolo.py      # Main application（開発用）
+├── raspi_hailo8l_yolo_full.py # 動作確認済みバックアップ（変更禁止）
+├── requirements.txt           # Python dependencies
+├── README.md                  # Setup and usage instructions
+├── models/                    # Model files (user-provided)
+├── output/                    # Saved videos/images
+└── logs/                      # Detection logs
 ```
+
+### 変更禁止ファイル・ディレクトリ
+**CRITICAL**: 以下のファイル・ディレクトリは変更禁止です。**絶対に変更を加えないこと**。
+
+| 対象 | 説明 |
+|-----|------|
+| `raspi_hailo8l_yolo_full.py` | 動作確認済みの完全版コード（バックアップ用） |
+| `reference/` | 参照用データ格納ディレクトリ（内部ファイル編集禁止） |
+
+変更が必要な場合は `raspi_hailo8l_yolo.py` を編集すること。
+
+### 関連プロジェクト
+以下のプロジェクトは本プロジェクトの `raspi_hailo8l_yolo.py` をライブラリとして使用しています。
+ライブラリAPIの変更時は後方互換性に注意すること。
+
+| プロジェクト | パス |
+|------------|------|
+| 12-002-pet-monitoring-yolov8 | `reference/12-002-pet-monitoring-yolov8/` |
 
 ### Security Notes
 - No sensitive data or API keys in code

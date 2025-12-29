@@ -7,8 +7,67 @@ Raspberry Pi 5 + 公式 AI Kit（Hailo-8L）+ Raspberry Pi Camera Module V3 を�
 - **単一ファイル構成**: `raspi_hailo8l_yolo.py` で完結
 - **高速推論**: Hailo-8L AIアクセラレータによる高速物体検出
 - **リアルタイム処理**: Camera Module V3 からのライブ映像処理
-- **柔軟な設定**: 解像度、信頼度閾値、IoU閾値などをコマンドライン引数で調整可能
-- **保存機能**: 検出結果の動画保存、CSVログ出力に対応
+- **柔軟な設定**: 解像度、信頼度閾値などをコマンドライン引数で調整可能
+- **ライブラリ対応**: 他プロジェクトからインポートして使用可能
+
+## ファイル構成
+
+本プロジェクトでは、用途に応じて2つのバージョンを提供しています。
+
+| ファイル | 行数 | 用途 |
+|---------|------|------|
+| `raspi_hailo8l_yolo.py` | 約400行 | **MVP版**（書籍掲載用・学習用） |
+| `raspi_hailo8l_yolo_full.py` | 約1230行 | **Full版**（全機能版・バックアップ） |
+
+### MVP版（raspi_hailo8l_yolo.py）
+
+書籍掲載用に最適化された最小構成版です。
+
+- **対象**: 初心者、書籍読者、シンプルな実装を求める方
+- **特徴**: コードが簡潔で理解しやすい
+- **機能**: 物体検出の基本機能に特化
+- **カメラ**: Camera Module V3 専用
+
+### Full版（raspi_hailo8l_yolo_full.py）
+
+全機能を実装した完全版です。**変更禁止**（バックアップ用）
+
+- **対象**: 高度な機能が必要な方
+- **追加機能**:
+  - USB Webカメラ対応（自動フォールバック）
+  - 動画保存機能（`--save`）
+  - CSVログ出力（`--log`）
+  - IoU閾値設定（`--iou`）
+  - クラス一覧表示（`--list-classes`）
+  - 高度なロギング機能
+  - コンテキストマネージャー対応
+
+### ライブラリとしての使用
+
+両バージョンとも、他のPythonプロジェクトからライブラリとしてインポートできます。
+
+```python
+from raspi_hailo8l_yolo import YOLODetector, CameraManager, draw_detections, COCO_CLASSES
+
+# 物体検出器の初期化
+detector = YOLODetector("models/yolov8s_h8l.hef", conf_threshold=0.25)
+
+# 特定クラスのみ検出
+detector = YOLODetector("models/yolov8s_h8l.hef", target_classes=['person', 'car'])
+
+# カメラからフレーム取得
+camera = CameraManager(resolution=(1280, 720))
+frame = camera.read_frame()
+
+# 物体検出実行
+detections = detector.detect(frame)
+
+# 結果を描画
+result = draw_detections(frame, detections)
+
+# リソース解放
+camera.release()
+```
 
 ## 必要なハードウェア
 
@@ -129,47 +188,58 @@ python raspi_hailo8l_yolo.py
 python raspi_hailo8l_yolo.py --res 1280x720 --conf 0.25 --iou 0.45
 ```
 
-### オプション一覧
+### オプション一覧（MVP版）
 
 | オプション | デフォルト | 説明 |
 |----------|----------|------|
 | `--model` | `models/yolov8s_h8l.hef` | HEFモデルファイルのパス |
 | `--res` | `1280x720` | カメラ解像度（640x480, 1280x720, 1920x1080） |
 | `--conf` | `0.25` | 信頼度閾値（0.0-1.0） |
-| `--iou` | `0.45` | IoU閾値（NMS用、0.0-1.0） |
 | `--device` | `0` | カメラデバイスID |
 | `--flip` | - | カメラ映像を上下反転（カメラを逆さまに設置した場合） |
+| `--classes` | - | 検出対象クラス（スペース区切りで複数指定可能） |
+
+### 追加オプション（Full版のみ）
+
+Full版（`raspi_hailo8l_yolo_full.py`）では以下の追加オプションが使用できます：
+
+| オプション | デフォルト | 説明 |
+|----------|----------|------|
+| `--iou` | `0.45` | IoU閾値（NMS用、0.0-1.0） |
 | `--save` | - | 動画保存を有効化 |
 | `--log` | - | 検出結果のCSVログ保存を有効化 |
-| `--classes` | - | 検出対象クラス（スペース区切りで複数指定可能） |
 | `--list-classes` | - | 使用可能なクラス一覧を表示して終了 |
 
-### 使用例
+### 使用例（MVP版）
 
 ```bash
 # 高解像度で実行
 python raspi_hailo8l_yolo.py --res 1920x1080
 
 # 高精度設定（信頼度を上げる）
-python raspi_hailo8l_yolo.py --conf 0.5 --iou 0.3
-
-# 動画保存とログ出力を有効化
-python raspi_hailo8l_yolo.py --save --log
+python raspi_hailo8l_yolo.py --conf 0.5
 
 # カメラを逆さまに設置している場合（上下反転）
 python raspi_hailo8l_yolo.py --flip
-
-# USB Webカメラを使用（Camera Module V3が利用できない場合）
-python raspi_hailo8l_yolo.py --device 0
 
 # 特定のクラスのみ検出（人物のみ）
 python raspi_hailo8l_yolo.py --classes person
 
 # 複数クラスを検出（人物、車、犬）
 python raspi_hailo8l_yolo.py --classes person car dog
+```
+
+### 使用例（Full版）
+
+```bash
+# 動画保存とログ出力を有効化
+python raspi_hailo8l_yolo_full.py --save --log
+
+# IoU閾値を調整
+python raspi_hailo8l_yolo_full.py --conf 0.5 --iou 0.3
 
 # 使用可能なクラス一覧を表示
-python raspi_hailo8l_yolo.py --list-classes
+python raspi_hailo8l_yolo_full.py --list-classes
 ```
 
 ### クラスフィルタリング
@@ -350,11 +420,16 @@ timestamp,frame_id,class_name,confidence,x1,y1,x2,y2
 
 ### コード構造
 
+**MVP版（raspi_hailo8l_yolo.py）**:
 - `YOLODetector`: Hailo-8L推論エンジン
 - `CameraManager`: カメラ入力管理
-- `DetectionLogger`: ログ出力管理
 - `draw_detections()`: 描画関数
 - `main()`: メイン処理
+
+**Full版で追加**:
+- `DetectionLogger`: ログ出力管理
+- `draw_info()`: パフォーマンス情報描画
+- `setup_logging()` / `get_logger()`: ロギング設定
 
 ### 新しいモデルの追加
 
